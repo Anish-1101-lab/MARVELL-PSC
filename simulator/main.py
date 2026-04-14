@@ -50,12 +50,11 @@ def run_evaluation(trace_mode='synthetic', rocksdb_trace_path=None):
     env = MigrationEnv(hierarchy_rl, alpha=10.0, beta=1.0, gamma=5.0)
     
     import os
-    # Instantiate or Load PPO model
-    # If we have a trained model, load it so we can execute real RL evaluations!
+    # Load the trained RL model if it exists
     model_path = "ppo_migration_model.zip"
     if os.path.exists(model_path):
         print(f"Loading trained RL model from {model_path}...")
-        rl_agent = PPO.load("ppo_migration_model", env=env)
+        rl_agent = PPO.load(model_path, env=env)
     else:
         print("Initializing untrained dummy RL model...")
         rl_agent = PPO("MlpPolicy", env, verbose=0, seed=42)
@@ -162,6 +161,30 @@ def run_evaluation(trace_mode='synthetic', rocksdb_trace_path=None):
     plt.legend()
     plt.grid(True)
     plt.savefig(os.path.join(artifact_dir, 'compare_hbm_usage.png'))
+    plt.close()
+    
+    # Plot 5: RL Framework Tier Usages
+    fig, ax1 = plt.subplots(figsize=(10, 6))
+    
+    ax1.set_xlabel('Accesses')
+    ax1.set_ylabel('Usage (%)', color='black')
+    ax1.plot(steps, hist_rl['hbm_usage'], color='tab:blue', label='HBM Usage (%)')
+    ax1.plot(steps, hist_rl['dram_usage'], color='tab:green', label='DRAM Usage (%)')
+    ax1.tick_params(axis='y', labelcolor='black')
+    
+    ax2 = ax1.twinx()
+    ax2.set_ylabel('SSD Usage (Absolute count)', color='tab:red')
+    ax2.plot(steps, hist_rl['ssd_usage'], color='tab:red', linestyle='--', label='SSD Usage')
+    ax2.tick_params(axis='y', labelcolor='tab:red')
+    
+    # Ask matplotlib for the plotted lines and labels to combine legends
+    lines_1, labels_1 = ax1.get_legend_handles_labels()
+    lines_2, labels_2 = ax2.get_legend_handles_labels()
+    ax1.legend(lines_1 + lines_2, labels_1 + labels_2, loc='center right')
+    
+    plt.title('Integrated RL Model: Tier Placement Over Time')
+    fig.tight_layout()
+    plt.savefig(os.path.join(artifact_dir, 'rl_tier_usage.png'))
     plt.close()
     
     print(f"Plots saved to {artifact_dir}")

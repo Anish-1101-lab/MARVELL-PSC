@@ -206,6 +206,14 @@ class SimulationEngine:
                 hbm_usage = self.hierarchy.tier_usage[Tier.HBM]
                 history['hbm_usage'].append((hbm_usage / hbm_cap * 100) if hbm_cap > 0 else 0)
                 
+                dram_cap = self.hierarchy.configs[Tier.DRAM].capacity
+                dram_usage = self.hierarchy.tier_usage[Tier.DRAM]
+                history.setdefault('dram_usage', []).append((dram_usage / dram_cap * 100) if dram_cap > 0 else 0)
+                
+                # SSD has 'inf' capacity, track absolute usage
+                ssd_usage = self.hierarchy.tier_usage[Tier.SSD]
+                history.setdefault('ssd_usage', []).append(ssd_usage)
+                
             if i > 0 and i % 10000 == 0:
                 print(f"Processed {i} accesses...")
         
