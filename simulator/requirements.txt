@@ -1,6 +1,0 @@
-numpy
-pandas
-lightgbm
-stable-baselines3
-matplotlib
-tqdm

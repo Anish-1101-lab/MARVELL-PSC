@@ -1,0 +1,16 @@
+{
+  "topology": "single_node",
+  "nodes": [
+    {
+      "id": 0,
+      "name": "compute_node_0",
+      "tiers": [0, 1, 2, 3],
+      "interconnect": "local"
+    }
+  ],
+  "links": [],
+  "metadata": {
+    "description": "Single-node topology for storage-tier simulation (no network effects)",
+    "note": "All tier accesses are node-local; network latency is zero."
+  }
+}
