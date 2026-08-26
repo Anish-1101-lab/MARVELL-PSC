@@ -12,7 +12,7 @@ This script rigorously evaluates all 4 dimensions of storage controller overhead
 import time
 import os
 import sys
-from collections import deque, OrderedDict
+from collections import deque, OrderedDict, Counter
 from typing import Dict, List, Tuple, Any
 import numpy as np
 import pandas as pd
@@ -99,8 +99,8 @@ class BenchmarkPSCController:
                 phase_id = int(p_logits.argmax(dim=1).item())
                 t_logits, pf_val = self.policy_model(x_seq, torch.tensor([phase_id]))
                 tier_id = int(t_logits.argmax(dim=1).item())
-                # If irregular (graph walk / pointer chasing or random), suppress spatial prefetch to prevent pollution
-                if not is_regular and phase_id in (0, 2):
+                # If irregular (graph walk / pointer chasing or random or zipfian), suppress spatial prefetch to prevent pollution
+                if (not is_regular and phase_id in (0, 2, 4)) or phase_id == 0:
                     prefetch_count = 0
                 else:
                     prefetch_count = int(np.clip(pf_val.item(), 0, 8))
@@ -316,6 +316,46 @@ class DetailedOverheadSimulator:
             "bus_transit_ms": bus_transit_ns / 1e6
         }
 
+    def run_lfu_baseline(self, trace: List[Dict]) -> Dict[str, Any]:
+        """Runs standard LFU cache simulation."""
+        cache = {}
+        freqs = Counter()
+        hits, misses = 0, 0
+        migrations = 0
+        bytes_migrated = 0
+        bus_transit_ns = 0.0
+
+        for event in trace:
+            bid = event["block_id"]
+            size = event["size_bytes"]
+
+            if bid in cache:
+                hits += 1
+                freqs[bid] += 1
+            else:
+                misses += 1
+                if len(cache) >= self.capacity_hbm:
+                    victim_bid = min(cache.keys(), key=lambda b: freqs[b])
+                    evicted_size = cache.pop(victim_bid)
+                    del freqs[victim_bid]
+                    migrations += 1
+                    bytes_migrated += evicted_size
+                    bus_transit_ns += (evicted_size / TIER_SPECS[2]["bw_gbps"])
+
+                migrations += 1
+                bytes_migrated += size
+                bus_transit_ns += (size / TIER_SPECS[2]["bw_gbps"])
+                cache[bid] = size
+                freqs[bid] = 1
+
+        total = hits + misses
+        return {
+            "hit_rate_pct": (hits / total * 100.0) if total > 0 else 0.0,
+            "migrations_count": migrations,
+            "migrated_mb": bytes_migrated / (1024 * 1024),
+            "bus_transit_ms": bus_transit_ns / 1e6
+        }
+
     def run_ml_policy(self, trace: List[Dict], controller: BenchmarkPSCController, window_size: int = 50) -> Dict[str, Any]:
         """Runs PSC Phase-Conditioned predictive tier placement and prefetching."""
         cache = OrderedDict()
@@ -427,18 +467,18 @@ class DetailedOverheadSimulator:
 # ===========================================================================
 # MAIN RUNNER: Execute and Format Complete Benchmark Output
 # ===========================================================================
-def load_workload_traces(n_samples: int = 10000) -> Dict[str, Tuple[List[Dict], int]]:
+def load_workload_traces(n_samples: int = 50000) -> Dict[str, Tuple[List[Dict], int]]:
     """Loads traces and returns trace lists along with calibrated cache capacities."""
     workloads = {}
 
-    # 1. ResNet50 (Zipfian distribution, 150KB files)
+    # 1. ResNet50 (Zipfian distribution, 150KB files) - Calibrated to 10k working cache
     resnet_path = "processed_traces/resnet_normalized.parquet"
     if os.path.exists(resnet_path):
         df_res = pd.read_parquet(resnet_path).head(n_samples)
         trace_resnet = [{"block_id": int(r["block_id"]), "size_bytes": int(r["size_kb"]) * 1024} for _, r in df_res.iterrows()]
     else:
         trace_resnet = generate_synthetic_trace(pattern="zipfian", n_accesses=n_samples)
-    workloads["ResNet (Zipfian)"] = (trace_resnet, 1000)
+    workloads["ResNet (Zipfian)"] = (trace_resnet, 10000)
 
     # 2. BERT (Sequential streaming, 4KB files)
     bert_path = "processed_traces/bert_normalized.parquet"
@@ -449,14 +489,14 @@ def load_workload_traces(n_samples: int = 10000) -> Dict[str, Tuple[List[Dict], 
         trace_bert = generate_synthetic_trace(pattern="sequential", n_accesses=n_samples)
     workloads["BERT (Sequential)"] = (trace_bert, 1000)
 
-    # 3. UNet3D (Random crop of 484 3D volumes, 500MB each)
+    # 3. UNet3D (Random crop of 484 3D volumes, 500MB each) - Calibrated to 10k working cache
     unet_path = "processed_traces/unet3d_normalized.parquet"
     if os.path.exists(unet_path):
         df_unet = pd.read_parquet(unet_path).head(n_samples)
         trace_unet = [{"block_id": int(r["block_id"]), "size_bytes": int(r["size_kb"]) * 1024} for _, r in df_unet.iterrows()]
     else:
         trace_unet = generate_synthetic_trace(pattern="random_crop", n_accesses=n_samples)
-    workloads["UNet3D (Random Crop)"] = (trace_unet, 100)
+    workloads["UNet3D (Random Crop)"] = (trace_unet, 10000)
 
     # 4. Strided / Regular Multi-Stride Access (Column-major / Tensor slicing, S=4, 4KB files)
     strided_path = "processed_traces/strided_normalized.parquet"
@@ -554,22 +594,23 @@ def main():
     # DIMENSIONS 3 & 4: Trace Simulation & Comparative Metrics
     # -------------------------------------------------------------
     print_banner("Dimensions 3 & 4: Migration Bandwidth & Misprediction Overhead")
-    workloads = load_workload_traces(n_samples=10000)
+    workloads = load_workload_traces(n_samples=50000)
 
-    print("Evaluating 10,000 I/O accesses across calibrated MLPerf workloads...")
+    print("Evaluating 50,000 I/O accesses across calibrated MLPerf workloads...")
     print("=" * 95)
 
     for wname, (trace, cap) in workloads.items():
         sim = DetailedOverheadSimulator(cache_capacity_hbm=cap, clock_ghz=1.0)
         ml_res = sim.run_ml_policy(trace, controller, window_size=50)
         lru_res = sim.run_lru_baseline(trace)
+        lfu_res = sim.run_lfu_baseline(trace)
 
         print(f"\nWorkload: {wname.upper()} (Accesses: {len(trace):,}, HBM Capacity: {cap})")
         print("-" * 95)
-        print(f"  • Hit Rate (ML vs. LRU)            : {ml_res['hit_rate_pct']:>6.2f}% vs. {lru_res['hit_rate_pct']:>6.2f}% (Gain: {ml_res['hit_rate_pct'] - lru_res['hit_rate_pct']:>+6.2f}%)")
-        print(f"  • Migrations Count (ML vs. LRU)    : {ml_res['migrations_count']:>8,} vs. {lru_res['migrations_count']:>8,}")
-        print(f"  • Total Volume Migrated over Bus   : {ml_res['migrated_mb']:>8.2f} MB (LRU: {lru_res['migrated_mb']:>8.2f} MB)")
-        print(f"  • Migration Bus Transit Time       : {ml_res['bus_transit_ms']:>8.2f} ms")
+        print(f"  • Hit Rate (ML vs. LRU vs. LFU)    : {ml_res['hit_rate_pct']:>6.2f}% vs. {lru_res['hit_rate_pct']:>6.2f}% vs. {lfu_res['hit_rate_pct']:>6.2f}% (Gain vs LRU: {ml_res['hit_rate_pct'] - lru_res['hit_rate_pct']:>+6.2f}%, vs LFU: {ml_res['hit_rate_pct'] - lfu_res['hit_rate_pct']:>+6.2f}%)")
+        print(f"  • Migrations Count (ML/LRU/LFU)    : {ml_res['migrations_count']:>8,} vs. {lru_res['migrations_count']:>8,} vs. {lfu_res['migrations_count']:>8,}")
+        print(f"  • Total Volume Migrated over Bus   : {ml_res['migrated_mb']:>8.2f} MB (LRU: {lru_res['migrated_mb']:>8.2f} MB, LFU: {lfu_res['migrated_mb']:>8.2f} MB)")
+        print(f"  • Migration Bus Transit Time       : {ml_res['bus_transit_ms']:>8.2f} ms (LRU: {lru_res['bus_transit_ms']:>8.2f} ms, LFU: {lfu_res['bus_transit_ms']:>8.2f} ms)")
         print(f"  • Speculative Prefetches Issued    : {ml_res['prefetches_issued']:>8,}")
         print(f"  • Prefetch Precision (Useful Hits) : {ml_res['prefetch_precision_pct']:>8.2f}% ({ml_res['prefetches_useful']:,} useful hits)")
         print(f"  • Wasted Prefetch / Pollution Rate : {ml_res['wasted_prefetch_pct']:>8.2f}% ({ml_res['wasted_prefetch_mb']:>6.2f} MB wasted)")
@@ -596,10 +637,10 @@ def main():
       - Volumetric workloads (UNet3D) move large blocks which creates substantial bus transit time.
 
   [4] MISPREDICTION & CACHE POLLUTION OVERHEAD:
-      - In Sequential workloads (BERT), Prefetch Precision is ~99.9%, turning a 0% LRU hit rate into ~99.9% ML hit rate.
+      - In Sequential workloads (BERT), Prefetch Precision is ~99.9%, turning a 0% LRU/LFU hit rate into ~99.9% ML hit rate.
       - In Strided workloads (Multi-Stride), stride-aware prefetching accurately tracks non-unit stride jumps (S > 1), achieving ~99.9% precision and preventing cache pollution.
-      - In Pointer-Chasing / Graph Walk workloads (GNNs/B-Trees), spatial prefetching is disabled by phase detection to prevent catastrophic cache pollution on discontinuous address jumps.
-      - In Zipfian workloads (ResNet), prefetching is disabled by phase detection to prevent cache pollution.
+      - In Pointer-Chasing / Graph Walk workloads (GNNs/B-Trees), LFU achieves superior hit rates by pinning high-frequency hub nodes without migration churn.
+      - In Zipfian workloads (ResNet), LFU and ML both leverage frequency/hotness awareness over recency-only LRU.
     """)
 
 if __name__ == "__main__":
