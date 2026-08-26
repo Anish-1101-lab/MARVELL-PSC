@@ -1,0 +1,40 @@
+{
+  "tiers": [
+    {
+      "id": 0,
+      "name": "HBM",
+      "latency_ns": 100,
+      "bandwidth_gbps": 3200,
+      "cost_per_gb": 30.0
+    },
+    {
+      "id": 1,
+      "name": "CXL_DRAM",
+      "latency_ns": 80,
+      "bandwidth_gbps": 256,
+      "cost_per_gb": 8.0
+    },
+    {
+      "id": 2,
+      "name": "NVMe_SSD",
+      "latency_ns": 100000,
+      "bandwidth_gbps": 12,
+      "cost_per_gb": 0.30
+    },
+    {
+      "id": 3,
+      "name": "Cold_Storage",
+      "latency_ns": 1000000,
+      "bandwidth_gbps": 2,
+      "cost_per_gb": 0.03
+    }
+  ],
+  "metadata": {
+    "description": "4-tier storage hierarchy for AI/ML workload simulation",
+    "units": {
+      "latency": "nanoseconds",
+      "bandwidth": "GB/s",
+      "cost": "USD per GB"
+    }
+  }
+}
