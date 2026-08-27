@@ -253,11 +253,7 @@ class PSCPredictorWrapper:
                 is_regular = True
 
         if self.has_weights:
-            if len(window_seq) < self.window_size:
-                padded_seq = [0] * (self.window_size - len(window_seq)) + list(window_seq)
-            else:
-                padded_seq = list(window_seq)[-self.window_size:]
-            x_seq = torch.tensor(padded_seq, dtype=torch.long).unsqueeze(0) % self.vocab_size
+            x_seq = torch.tensor(window_seq, dtype=torch.long).unsqueeze(0) % self.vocab_size
             with torch.no_grad():
                 p_logits = self.phase_model(x_seq)
                 phase_id = int(p_logits.argmax(dim=1).item())
@@ -269,7 +265,7 @@ class PSCPredictorWrapper:
                     prefetch_count = int(np.clip(pf_val.item(), 0, 8))
             return tier_id, prefetch_count, phase_id, detected_stride
         
-        # Calibrated ML controller logic
+        # Calibrated ML controller logic matching BenchmarkPSCController
         if len(diffs) > 0 and np.all(diffs == diffs[0]) and diffs[0] > 0:
             stride_val = int(diffs[0])
             if stride_val == 1:
@@ -279,8 +275,10 @@ class PSCPredictorWrapper:
         
         unique_ratio = len(set(window_seq)) / len(window_seq)
         if unique_ratio < 0.6:
+            # Phase 0: ResNet Zipfian (hot tier placement, suppressed regular prefetching)
             return 0, 0, 0, 1
         
+        # Phase 4: Irregular Graph / Pointer-chasing
         return 1, 0, 4, 1
 
 
@@ -294,7 +292,6 @@ def run_psc_simulation(
     """Simulates Marvell PSC Phase-Conditioned controller with Stride-Guided prefetching and ML tier placement."""
     controller = PSCPredictorWrapper(vocab_size=100000, window_size=window_size)
     cache = OrderedDict()
-    freq_tracker = Counter()
     window = deque(maxlen=window_size)
     prefetched_tracker: Dict[int, bool] = {}
     
@@ -320,7 +317,6 @@ def run_psc_simulation(
         if is_write:
             workload_writes += size
 
-        freq_tracker[bid] += 1
         queueing_delay_us = max(0.0, bus_available_time_us - current_time_us)
 
         # 1. Check Fast Tier Hit
@@ -333,23 +329,9 @@ def run_psc_simulation(
                 prefetched_tracker[bid] = True
         else:
             misses += 1
-            # Predict tier and eviction priority
-            window.append(bid)
-            if len(window) >= window_size:
-                pred_tier, prefetch_n, phase_id, stride = controller.predict(list(window))
-            else:
-                pred_tier, prefetch_n, phase_id, stride = 0, 0, 0, 1
-
             evict_service_ns = 0.0
             if len(cache) >= capacity_hbm:
-                # Frequency-aware LRU eviction for Zipfian/Graph phases
-                if phase_id in (0, 4):
-                    oldest_keys = list(cache.keys())[:max(1, capacity_hbm // 4)]
-                    evicted_bid = min(oldest_keys, key=lambda b: freq_tracker[b])
-                    evicted_size = cache.pop(evicted_bid)
-                else:
-                    evicted_bid, evicted_size = cache.popitem(last=False)
-                    
+                evicted_bid, evicted_size = cache.popitem(last=False)
                 migrations += 1
                 bytes_migrated += evicted_size
                 evict_bus_ns = (evicted_size / TIERS[2]["bandwidth_gbps"])
@@ -374,10 +356,8 @@ def run_psc_simulation(
         latencies_us.append(req_latency_us)
 
         # 2. Update Sliding Window & Issue PSC Phase-Conditioned Prefetches
-        if len(window) < window_size:
-            window.append(bid)
-            
-        if len(window) >= 4:
+        window.append(bid)
+        if len(window) >= window_size:
             pred_tier, prefetch_n, phase_id, stride = controller.predict(list(window))
             if prefetch_n > 0:
                 for offset in range(1, prefetch_n + 1):
@@ -396,7 +376,6 @@ def run_psc_simulation(
                         bus_transit_ns += pf_bus_ns
                         cache[pf_bid] = size
                         prefetched_tracker[pf_bid] = False
-                        # Asynchronous prefetch occupies bus bandwidth in background
                         bus_available_time_us = max(current_time_us, bus_available_time_us) + (pf_bus_ns / 1000.0)
 
     total = hits + misses

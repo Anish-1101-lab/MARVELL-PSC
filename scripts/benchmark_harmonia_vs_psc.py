@@ -93,7 +93,7 @@ def load_all_workloads(n_samples: int = 50000) -> Dict[str, Tuple[List[Dict[str,
         trace_res = [{"block_id": int(r["block_id"]), "size_bytes": int(r["size_kb"]) * 1024, "is_write": False} for _, r in df.iterrows()]
     else:
         trace_res = generate_synthetic_trace(pattern="zipfian", n_accesses=n_samples)
-    workloads["ResNet (Zipfian)"] = (trace_res, 1000)
+    workloads["ResNet (Zipfian)"] = (trace_res, 10000)
 
     # 2. BERT (Sequential)
     bert_p = "processed_traces/bert_normalized.parquet"
@@ -102,7 +102,7 @@ def load_all_workloads(n_samples: int = 50000) -> Dict[str, Tuple[List[Dict[str,
         trace_bert = [{"block_id": int(r["block_id"]), "size_bytes": int(r["size_kb"]) * 1024, "is_write": False} for _, r in df.iterrows()]
     else:
         trace_bert = generate_synthetic_trace(pattern="sequential", n_accesses=n_samples)
-    workloads["BERT (Sequential)"] = (trace_bert, 500)
+    workloads["BERT (Sequential)"] = (trace_bert, 1000)
 
     # 3. UNet3D (Random Crop)
     unet_p = "processed_traces/unet3d_normalized.parquet"
@@ -111,7 +111,7 @@ def load_all_workloads(n_samples: int = 50000) -> Dict[str, Tuple[List[Dict[str,
         trace_unet = [{"block_id": int(r["block_id"]), "size_bytes": int(r["size_kb"]) * 1024, "is_write": False} for _, r in df.iterrows()]
     else:
         trace_unet = generate_synthetic_trace(pattern="random_crop", n_accesses=n_samples)
-    workloads["UNet3D (Random Crop)"] = (trace_unet, 100)
+    workloads["UNet3D (Random Crop)"] = (trace_unet, 10000)
 
     # 4. Strided (Multi-Stride)
     strided_p = "processed_traces/strided_normalized.parquet"
@@ -120,7 +120,7 @@ def load_all_workloads(n_samples: int = 50000) -> Dict[str, Tuple[List[Dict[str,
         trace_strided = [{"block_id": int(r["block_id"]), "size_bytes": int(r["size_kb"]) * 1024, "is_write": False} for _, r in df.iterrows()]
     else:
         trace_strided = generate_synthetic_trace(pattern="strided", n_accesses=n_samples, stride=4)
-    workloads["Strided (Multi-Stride)"] = (trace_strided, 500)
+    workloads["Strided (Multi-Stride)"] = (trace_strided, 1000)
 
     # 5. GNN (Graph Walk / Pointer-Chasing)
     graph_p = "processed_traces/graph_walk_normalized.parquet"
@@ -129,7 +129,7 @@ def load_all_workloads(n_samples: int = 50000) -> Dict[str, Tuple[List[Dict[str,
         trace_graph = [{"block_id": int(r["block_id"]), "size_bytes": int(r["size_kb"]) * 1024, "is_write": False} for _, r in df.iterrows()]
     else:
         trace_graph = generate_synthetic_trace(pattern="graph_walk", n_accesses=n_samples)
-    workloads["GNN (Graph Walk)"] = (trace_graph, 500)
+    workloads["GNN (Graph Walk)"] = (trace_graph, 1000)
 
     # 6. Mixed Write-Intensive Workload (SYSTOR17 / Cloud VDI pattern)
     trace_vdi = []
@@ -138,7 +138,7 @@ def load_all_workloads(n_samples: int = 50000) -> Dict[str, Tuple[List[Dict[str,
         bid = int(rng.zipf(1.2) % 10000)
         is_w = rng.random() < 0.65 # 65% writes
         trace_vdi.append({"block_id": bid, "size_bytes": 4096, "is_write": is_w})
-    workloads["VDI (Write-Intensive Mixed)"] = (trace_vdi, 500)
+    workloads["VDI (Write-Intensive Mixed)"] = (trace_vdi, 2000)
 
     return workloads
 
