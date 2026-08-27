@@ -467,7 +467,7 @@ class DetailedOverheadSimulator:
 # ===========================================================================
 # MAIN RUNNER: Execute and Format Complete Benchmark Output
 # ===========================================================================
-def load_workload_traces(n_samples: int = 50000) -> Dict[str, Tuple[List[Dict], int]]:
+def load_workload_traces(n_samples: int = 100000) -> Dict[str, Tuple[List[Dict], int]]:
     """Loads traces and returns trace lists along with calibrated cache capacities."""
     workloads = {}
 
@@ -594,9 +594,9 @@ def main():
     # DIMENSIONS 3 & 4: Trace Simulation & Comparative Metrics
     # -------------------------------------------------------------
     print_banner("Dimensions 3 & 4: Migration Bandwidth & Misprediction Overhead")
-    workloads = load_workload_traces(n_samples=50000)
+    workloads = load_workload_traces(n_samples=100000)
 
-    print("Evaluating 50,000 I/O accesses across calibrated MLPerf workloads...")
+    print("Evaluating 100,000 I/O accesses across calibrated MLPerf workloads...")
     print("=" * 95)
 
     for wname, (trace, cap) in workloads.items():
