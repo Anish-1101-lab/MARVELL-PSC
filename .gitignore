@@ -12,8 +12,11 @@ external/astra-sim
 external/libCacheSim
 external/rocksdb
 data/
+*.pth
+*.pt
 weights/*.pth
 weights/*.zip
 weights/**/*.pt
 weights/**/*.pth
 weights/**/*.zip
+
